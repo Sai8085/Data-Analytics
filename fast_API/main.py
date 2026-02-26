@@ -37,6 +37,7 @@ class NiftyCreate(BaseModel):
     dt: str
     time: float
 
+
 # 5️⃣ FastAPI App
 app = FastAPI()
 
