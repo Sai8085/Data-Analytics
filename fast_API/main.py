@@ -1,93 +1,191 @@
-from fastapi import FastAPI, Depends
-from sqlalchemy import create_engine, Column, Integer, String, Float
+# 1️ IMPORTS
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy import create_engine, Column, String, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import pandas as pd
 
-# 1.connection to database in postgresql
+# 2️ DATABASE CONFIG
+
 DATABASE_URL = "postgresql://postgres:9999@localhost:5432/Micro_project"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# 2. Model - updated to match csv file columns in database
+# 3️ DATABASE MODEL
+
 class NiftyData(Base):
-    __tablename__ = "timestamp" 
-    
-    timestamp = Column(String, primary_key=True, index=True) 
+    __tablename__ = "timestamp"   
+
+    timestamp = Column(String, primary_key=True, index=True)
     open = Column(Float)
     high = Column(Float)
     low = Column(Float)
     close = Column(Float)
     dt = Column(String)
     time = Column(Float)
+# 4️⃣ Pydantic Schema (For CRUD)
+class NiftyCreate(BaseModel):
+    timestamp: str
+    open: float
+    high: float
+    low: float
+    close: float
+    dt: str
+    time: float
 
+# 5️⃣ FastAPI App
 app = FastAPI()
 
-# 3. DB Session Dependency
+# CORS for React
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+
+# 6️ Database Dependency
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
+# 7️ ROOT CHECK
 @app.get("/")
-def read_root():
-    return {"status": "Connected to PostgreSQL!"}
+def root():
+    return {"message": "FastAPI connected to PostgreSQL successfully!"}
 
-# 4. GET Route to fetch data
-@app.get("/get-all-data")
-def read_nifty_data(db: Session = Depends(get_db)):
-    # it helps to return the first 100 rows from the csv file
-    data = db.query(NiftyData).limit(100).all()
-    return data
+# 8️ ANALYTICS APIs
 
-# 5. UPLOAD Route to the csv file
-@app.get("/upload-my-csv")
-def upload_csv():
-    try:
-        df = pd.read_csv("nifty50.csv") 
-        
-        # This pushes the data into the 'timestamp' table
-        # 'replace':It ensures the table structure that matches to the csv  exactly
-        df.to_sql('timestamp', con=engine, if_exists='replace', index=False)
-        
-        return {"message": f"Success! Uploaded {len(df)} rows from nifty50.csv"}
-    except Exception as e:
-        return {"error": str(e)}
+# Trend (Line Chart)
+@app.get("/analytics/trend")
+def get_trend(db: Session = Depends(get_db)):
+    data = db.query(NiftyData.timestamp, NiftyData.close).limit(100).all()
+    return [{"timestamp": d[0], "close": d[1]} for d in data]
 
-    return {"error": "Timestamp not found"}
-    # Helps to search data for a specific date
-@app.get("/get-by-date/{date_val}")
-def get_by_date(date_val: str, db: Session = Depends(get_db)):
+
+#  KPI Summary
+@app.get("/analytics/summary")
+def summary(db: Session = Depends(get_db)):
+    records = db.query(NiftyData).all()
+    total = len(records)
+
+    if total == 0:
+        return {"message": "No data found"}
+
+    avg_close = sum(r.close for r in records) / total
+    max_high = max(r.high for r in records)
+    min_low = min(r.low for r in records)
+
+    return {
+        "total_records": total,
+        "average_close": round(avg_close, 2),
+        "max_high": max_high,
+        "min_low": min_low
+    }
+
+
+# Filter by Date
+@app.get("/filter/{date_val}")
+def filter_date(date_val: str, db: Session = Depends(get_db)):
     results = db.query(NiftyData).filter(NiftyData.dt == date_val).all()
     if not results:
-        return {"message": f"No records found for {date_val}"}
-    return results
+        return {"message": "No data found for this date"}
+    return [vars(r) for r in results]
 
-# 7. To get the high-low spread for a specific date
+
+# Spread Analysis
 @app.get("/analytics/spread/{ts}")
-def get_spread(ts: str, db: Session = Depends(get_db)):
+def spread(ts: str, db: Session = Depends(get_db)):
     record = db.query(NiftyData).filter(NiftyData.timestamp == ts).first()
-    if record:
-        spread = record.high - record.low
-        return {
-            "timestamp": record.timestamp,
-            "spread": round(spread, 2),
-            "is_volatile": spread > 5.0  
+    if not record:
+        raise HTTPException(status_code=404, detail="Timestamp not found")
+
+    spread_value = record.high - record.low
+
+    return {
+        "timestamp": record.timestamp,
+        "spread": round(spread_value, 2),
+        "trend": "Up" if record.close > record.open else "Down"
+    }
+
+
+# Correlation Heatmap Data
+@app.get("/analytics/correlation")
+def correlation(db: Session = Depends(get_db)):
+    records = db.query(NiftyData).all()
+
+    if not records:
+        return {"message": "No data available"}
+
+    df = pd.DataFrame([
+        {
+            "open": r.open,
+            "high": r.high,
+            "low": r.low,
+            "close": r.close
         }
-    return {"error": "Timestamp not found"}
-@app.get("/analytics/volatility")
-def get_volatility_report(limit: int = 10, db: Session = Depends(get_db)):
-    #  changing the number of records from the UI!
-    records = db.query(NiftyData).limit(limit).all()
-    analysis = []
-    for r in records:
-        analysis.append({
-            "timestamp": r.timestamp,
-            "range": round(r.high - r.low, 2),
-            "trend": "Bullish (Up)" if r.close > r.open else "Bearish (Down)"
-        })
-    return analysis
+        for r in records
+    ])
+
+    corr = df.corr()
+    return corr.to_dict()
+# 9️ CRUD APIs
+#  CREATE
+@app.post("/data")
+def create_data(data: NiftyCreate, db: Session = Depends(get_db)):
+    existing = db.query(NiftyData).filter(NiftyData.timestamp == data.timestamp).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Timestamp already exists")
+
+    new_record = NiftyData(**data.dict())
+    db.add(new_record)
+    db.commit()
+
+    return {"message": "Record inserted successfully"}
+
+
+#  READ
+@app.get("/data")
+def read_data(db: Session = Depends(get_db)):
+    records = db.query(NiftyData).limit(200).all()
+    return [vars(r) for r in records]
+
+
+#  UPDATE
+@app.put("/data/{timestamp}")
+def update_data(timestamp: str, data: NiftyCreate, db: Session = Depends(get_db)):
+    record = db.query(NiftyData).filter(NiftyData.timestamp == timestamp).first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    for key, value in data.dict().items():
+        setattr(record, key, value)
+
+    db.commit()
+
+    return {"message": "Record updated successfully"}
+
+
+#  DELETE
+@app.delete("/data/{timestamp}")
+def delete_data(timestamp: str, db: Session = Depends(get_db)):
+    record = db.query(NiftyData).filter(NiftyData.timestamp == timestamp).first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    db.delete(record)
+    db.commit()
+
+    return {"message": "Record deleted successfully"}
