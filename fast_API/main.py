@@ -70,9 +70,9 @@ def root():
 # Trend (Line Chart)
 @app.get("/analytics/trend")
 def get_trend(db: Session = Depends(get_db)):
-    data = db.query(NiftyData.timestamp, NiftyData.close).limit(100).all()
+    # REMOVED .limit(100) so the chart shows the full timeline
+    data = db.query(NiftyData.timestamp, NiftyData.close).order_by(NiftyData.dt.asc()).all()
     return [{"timestamp": d[0], "close": d[1]} for d in data]
-
 
 #  KPI Summary
 @app.get("/analytics/summary")
@@ -158,7 +158,8 @@ def create_data(data: NiftyCreate, db: Session = Depends(get_db)):
 #  READ
 @app.get("/data")
 def read_data(db: Session = Depends(get_db)):
-    records = db.query(NiftyData).limit(200).all()
+    # REMOVED .limit(200) to allow 2-3 years of data to load
+    records = db.query(NiftyData).order_by(NiftyData.dt.asc()).all()
     return [vars(r) for r in records]
 
 
