@@ -27,7 +27,7 @@ class NiftyData(Base):
     close = Column(Float)
     dt = Column(String)
     time = Column(Float)
-# 4️⃣ Pydantic Schema (For CRUD)
+# 4️ Pydantic Schema (For CRUD)
 class NiftyCreate(BaseModel):
     timestamp: str
     open: float
@@ -38,7 +38,7 @@ class NiftyCreate(BaseModel):
     time: float
 
 
-# 5️⃣ FastAPI App
+# 5️ FastAPI App
 app = FastAPI()
 
 # CORS for React
@@ -70,7 +70,6 @@ def root():
 # Trend (Line Chart)
 @app.get("/analytics/trend")
 def get_trend(db: Session = Depends(get_db)):
-    # REMOVED .limit(100) so the chart shows the full timeline
     data = db.query(NiftyData.timestamp, NiftyData.close).order_by(NiftyData.dt.asc()).all()
     return [{"timestamp": d[0], "close": d[1]} for d in data]
 
